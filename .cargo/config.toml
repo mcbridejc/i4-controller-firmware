@@ -1,8 +1,10 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-runner = "arm-none-eabi-gdb -q -x openocd.gdb"
+runner = "probe-rs run --chip STM32G474RETx --probe 0483:3748"
 
 rustflags = [
+  "-C", "linker=flip-link",
   "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=-Tdefmt.x",
 ]
 
 [build]

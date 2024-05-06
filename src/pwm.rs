@@ -1,4 +1,6 @@
-use stm32_metapac::timer::{regs::Psc, vals, TimGp16};
+use stm32_metapac::timer::regs::{CcmrOutput, Ccr16};
+use stm32_metapac::timer::{vals, TimGp16};
+use stm32_metapac::common::{Reg, RW};
 
 use crate::pac::timer::TimAdv;
 
@@ -36,10 +38,11 @@ impl<'a> Pwm for PwmChan<'a> {
     }
 }
 
+#[allow(dead_code)]
 impl PwmTimer<TimAdv> {
     pub fn new(tim: TimAdv, pwm_frequency: u32, clock_frequency: u32) -> Self {
         // timer input clock ticks per PWM period
-        let ticks = clock_frequency / pwm_frequency;
+        let ticks = clock_frequency / pwm_frequency / 2;
         // Compute the prescaler to allow achieve the frequency with a 16-bit counter
         let psc = ((ticks - 1) / (1 << 16)) as u16;
         tim.psc().write(|w| w.set_psc(psc));
@@ -48,8 +51,11 @@ impl PwmTimer<TimAdv> {
         let arr = (ticks / (psc + 1) as u32) as u16;
         tim.arr().write(|w| w.set_arr(arr));
 
-        // Enable all output channels
+        defmt::info!("ARR: {}", arr);
 
+        tim.cr1().modify(|w| w.set_cms(vals::Cms::CENTERALIGNED3));
+
+        // Enable all output channels
         for ccmr_n in 0..2 {
             for ch_n in 0..2 {
                 tim.ccmr_output(ccmr_n).modify(|w| {
@@ -58,6 +64,15 @@ impl PwmTimer<TimAdv> {
                 });
             }
         }
+
+        // Missing from metapac
+        // Turn on CC5
+        let ccmr3: Reg<CcmrOutput, RW> = unsafe { Reg::from_ptr((tim.as_ptr() as *mut u8).add(0x50) as _) };
+        ccmr3.modify(|w| {
+            w.set_ocm(0, vals::Ocm::TOGGLE);
+            w.set_ocpe(0, true);
+        });
+
         for n in 0..4 {
             // capture/compare output enable
             tim.ccer().modify(|w| w.set_cce(n, true));
@@ -65,10 +80,24 @@ impl PwmTimer<TimAdv> {
         // Master out enable
         tim.bdtr().modify(|w| w.set_moe(true));
 
-        // Enable timer
-        tim.cr1().modify(|w| w.set_cen(true));
+        // Setup CCR5 as trgo2 to trigger ADC
+        let ccr5: Reg<Ccr16, RW> = unsafe { Reg::from_ptr((tim.as_ptr() as *mut u8).add(0x48) as _) };
+        //ccr5.write(|w| w.set_ccr(arr));
+        ccr5.write(|w| w.set_ccr(30));
 
+        // // Set CC5E bit, which is not in metapac
+        // tim.ccer().modify(|w| w.0 |= 1<<16);
+
+        // CR2 MMS register definitions are broken so hack it a bit
+        //tim.cr2().modify(|w| w.0 |= 0b1000<<20);
+        tim.cr2().modify(|w| w.0 |= 0b1000<<20);
         Self { tim }
+    }
+
+    #[inline]
+    pub fn enable(&self) {
+        // Enable timer
+        self.tim.cr1().modify(|w| w.set_cen(true));
     }
 
     pub fn ch1<'a>(&'a self) -> PwmChan<'a> {
@@ -111,11 +140,12 @@ impl MultiPwm for PwmTimer<TimAdv> {
 }
 
 
+#[allow(dead_code)]
 // Implementation for general purpose 16-bit timers. It's *almost* identical, but not quite.
 impl PwmTimer<TimGp16> {
     pub fn new(tim: TimGp16, pwm_frequency: u32, clock_frequency: u32) -> Self {
         // timer input clock ticks per PWM period
-        let ticks = clock_frequency / pwm_frequency;
+        let ticks = clock_frequency / pwm_frequency / 2;
         // Compute the prescaler to allow achieve the frequency with a 16-bit counter
         let psc = ((ticks - 1) / (1 << 16)) as u16;
         tim.psc().write(|w| w.set_psc(psc));
@@ -123,6 +153,9 @@ impl PwmTimer<TimGp16> {
         // Compute ARR to achieve the precise frequency
         let arr = (ticks / (psc + 1) as u32) as u16;
         tim.arr().write(|w| w.set_arr(arr));
+
+
+        tim.cr1().modify(|w| w.set_cms(vals::Cms::CENTERALIGNED3));
 
         // Enable all output channels
 
@@ -139,10 +172,13 @@ impl PwmTimer<TimGp16> {
             tim.ccer().modify(|w| w.set_cce(n, true));
         }
 
-        // Enable timer
-        tim.cr1().modify(|w| w.set_cen(true));
-
         Self { tim }
+    }
+
+    #[inline]
+    pub fn enable(&self) {
+        // Enable timer
+        self.tim.cr1().modify(|w| w.set_cen(true));
     }
 
     pub fn ch1<'a>(&'a self) -> PwmChan<'a> {

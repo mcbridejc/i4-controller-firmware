@@ -5,10 +5,9 @@ usb_pid = "3748"
 [default.general]
 chip = "STM32G474RETx"
 
+[default.rtt]
+enabled = true
 
-#[default.rtt]
-#enabled = true
-
-#channels = [
-#    { up = 0, name = "defmt_rtt", format = "Defmt" }
-#]
+channels = [
+    { up = 0, name = "defmt_rtt", format = "Defmt" }
+]
