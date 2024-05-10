@@ -1,21 +1,20 @@
 #![no_std]
 #![no_main]
 use core::{
-    convert::Infallible,
-    num::{NonZeroU16, NonZeroU8},
-    result,
-    time::Duration,
+    borrow::BorrowMut, cell::RefCell, convert::Infallible, mem::MaybeUninit, num::{NonZeroU16, NonZeroU8}, pin::pin, sync::atomic::{AtomicBool, AtomicI16}
 };
 
-use cortex_m::interrupt;
+use cortex_m::interrupt::Mutex;
 use lilos::time::{Millis, TickTime};
 use pac::{
     timer::{TimAdv, TimGp16},
     RCC,
 };
-use stm32_metapac as pac;
+use pwm::PwmTimer;
+use static_cell::StaticCell;
+use stm32_metapac::{self as pac, interrupt};
 
-use crate::{gpio::DynamicPin, pwm::Pwm};
+use crate::{gpio::DynamicPin, step_timer::StepTimer, xydrive::XYDrive};
 
 use cortex_m_rt as _;
 use defmt_rtt as _;
@@ -23,7 +22,7 @@ use fdcan::{
     config::{DataBitTiming, FdCanConfig},
     frame::TxFrameHeader,
     id::StandardId,
-    FdCan, Instance, NormalOperationMode,
+    FdCan, NormalOperationMode,
 };
 use panic_probe as _;
 
@@ -31,6 +30,11 @@ mod adc;
 mod current_control;
 mod gpio;
 mod pwm;
+mod stepper;
+mod step_timer;
+mod xydrive;
+
+use stepper::Stepper;
 
 use gpio::Pin;
 
@@ -50,9 +54,20 @@ unsafe impl fdcan::Instance for FdCan2 {
     const REGISTERS: *mut fdcan::RegisterBlock = pac::FDCAN2.as_ptr() as _;
 }
 
-// pub const FDCAN1: can::Fdcan = unsafe { can::Fdcan::from_ptr(0x4000_6400 as usize as _) };
-// pub const FDCAN2: can::Fdcan = unsafe { can::Fdcan::from_ptr(0x4000_6800 as usize as _) };
-// pub const FDCAN3: can::Fdcan = unsafe { can::Fdcan::from_ptr(0x4000_6c00 as usize as _) };
+static XY_DRIVE: Mutex<RefCell<Option<XYDrive>>> = Mutex::new(RefCell::new(None));
+
+static X_STEPPER: StaticCell<Stepper> = StaticCell::new();
+static Y_STEPPER: StaticCell<Stepper> = StaticCell::new();
+// References for the IRQs
+static mut X_STEPPER_REF: Option<&Stepper> = None;
+static mut Y_STEPPER_REF: Option<&Stepper> = None;
+
+static TIMER1: StaticCell<PwmTimer<TimAdv>> = StaticCell::new();
+static TIMER3: StaticCell<PwmTimer<TimGp16>> = StaticCell::new();
+static TIMER8: StaticCell<PwmTimer<TimAdv>> = StaticCell::new();
+
+const MIN_STEP_FREQ: i32 = 8;
+const MAX_STEP_FREQ: i32 = 800;
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
@@ -70,7 +85,7 @@ fn main() -> ! {
     while !RCC.cr().read().pllrdy() {}
 
     const CLK_FREQ: u32 = 128_000_000;
-    const PWM_FREQ: u32 = 30_000;
+    const PWM_FREQ: u32 = 100_000;
 
     defmt::info!("HELLO WORLD!");
     pac::PWR.cr5().modify(|w| w.set_r1mode(true));
@@ -85,7 +100,9 @@ fn main() -> ! {
     });
 
     RCC.apb1enr1().modify(|w| {
+        w.set_tim2en(true);
         w.set_tim3en(true);
+        w.set_tim5en(true);
         w.set_fdcanen(true);
     });
     RCC.ccipr()
@@ -168,9 +185,9 @@ fn main() -> ! {
     adc::configure_op_amps();
 
     // TODO: Why can the generic type here not be inferred from the argument?
-    let timer1 = pwm::PwmTimer::<TimAdv>::new(pac::TIM1, PWM_FREQ, CLK_FREQ);
-    let timer3 = pwm::PwmTimer::<TimGp16>::new(pac::TIM3, PWM_FREQ, CLK_FREQ);
-    let timer8 = pwm::PwmTimer::<TimAdv>::new(pac::TIM8, PWM_FREQ, CLK_FREQ);
+    let timer1 = TIMER1.init(pwm::PwmTimer::<TimAdv>::new(pac::TIM1, PWM_FREQ, CLK_FREQ));
+    let timer3 = TIMER3.init(pwm::PwmTimer::<TimGp16>::new(pac::TIM3, PWM_FREQ, CLK_FREQ));
+    let timer8 = TIMER8.init(pwm::PwmTimer::<TimAdv>::new(pac::TIM8, PWM_FREQ, CLK_FREQ));
 
     let ch1_in1 = timer1.ch4();
     let ch1_in2 = timer3.ch1();
@@ -189,6 +206,27 @@ fn main() -> ! {
     current3.set_duty_cycle(0);
     let current4 = current_control::IChannel::new(ch4_in1, ch4_in2);
     current4.set_duty_cycle(0);
+
+    let x_stepper = X_STEPPER.init(Stepper::new(current1, current2));
+    let y_stepper = Y_STEPPER.init(Stepper::new(current3, current4));
+    unsafe {
+        X_STEPPER_REF = Some(x_stepper);
+        Y_STEPPER_REF = Some(y_stepper);
+    }
+
+    // let xy_drive = XYDrive::new(current1, current2, current3, current4);
+    // cortex_m::interrupt::free(|cs| {
+    //     XY_DRIVE.borrow(cs).replace(Some(xy_drive));
+    // });
+
+    let mut x_step_timer = StepTimer::new(pac::TIM2, CLK_FREQ);
+    let mut y_step_timer = StepTimer::new(pac::TIM5, CLK_FREQ);
+    x_step_timer.enable_irq();
+    y_step_timer.enable_irq();
+    unsafe {
+        cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM2);
+        cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM5);
+    }
 
     timer1.enable();
     timer3.enable();
@@ -221,9 +259,8 @@ fn main() -> ! {
         });
 
     can.apply_config(can_config);
-    let mut can = can.into_normal();
-
-    //let (_can_control, mut can_tx, can_rx0, _can_rx1) = can.split();
+    let can = can.into_normal();
+    let (_can_control, can_tx, can_rx0, _can_rx1) = can.split();
 
     pac::DBGMCU.cr().modify(|w| {
         w.set_dbg_standby(true);
@@ -236,82 +273,23 @@ fn main() -> ! {
     // Configure the systick timer for 1kHz ticks at 16MHz.
     lilos::time::initialize_sys_tick(&mut cp.SYST, 128_000_000);
 
-    let mut next_tick = TickTime::from_millis_since_boot(1000);
-
-    // let buffer = [0xaau8; 8];
-    // let mut count = 0u16;
-    // loop {
-    //     let psr = pac::FDCAN2.psr().read();
-    //     defmt::info!(
-    //         "PSR LEC=0x{:x} DLEC=0x{:x}",
-    //         psr.lec().to_bits(),
-    //         psr.dlec()
-    //     );
-
-    //     while TickTime::now() < next_tick {}
-    //     next_tick += Duration::from_millis(1000);
-
-    //     count = count.overflowing_add(1).0;
-
-    //     let result = can.transmit(
-    //         TxFrameHeader {
-    //             len: 8,
-    //             frame_format: fdcan::frame::FrameFormat::Standard,
-    //             id: fdcan::id::Id::Standard(StandardId::new(0x1bf).unwrap()),
-    //             bit_rate_switching: false,
-    //             marker: None,
-    //         },
-    //         &buffer,
-    //     );
-    //     match result {
-    //         Ok(ret) => match ret {
-    //             Some(_) => defmt::info!("Some"),
-    //             None => defmt::info!("None"),
-    //         },
-    //         Err(_) => defmt::error!("CAN ERROR"),
-    //     }
-    //     defmt::info!("CAN {}", count);
-    //     let errors = can.error_counters();
-    //     defmt::info!("Errors: {} {}", errors.can_errors, errors.transmit_err);
-    // }
-
-    // let can_task = core::pin::pin!(async {
-    //     let buffer = [0xaau8; 8];
-    //     let mut count = 0u16;
-    //     loop {
-    //         // if can_tx_pin.is_out_high() {
-    //         //     can_tx_pin.set_low();
-    //         // } else {
-    //         //     can_tx_pin.set_high();
-    //         // }
-    //         count = count.overflowing_add(1).0;
-    //         lilos::time::sleep_for(Duration::from_millis(500)).await;
-
-    //         if let Err(e) = can.transmit(
-    //             TxFrameHeader {
-    //                 len: 8,
-    //                 frame_format: fdcan::frame::FrameFormat::Standard,
-    //                 id: fdcan::id::Id::Standard(StandardId::new(0x1bf).unwrap()),
-    //                 bit_rate_switching: false,
-    //                 marker: None,
-    //             },
-    //             &buffer,
-    //         ) {
-    //             defmt::info!("CAN ERROR");
-    //         }
-    //     }
-    // });
-
     //adc::trim_opamps();
 
     unsafe { cortex_m::interrupt::enable() };
 
-    lilos::exec::run_tasks(&mut [core::pin::pin!(main_task(can))], lilos::exec::ALL_TASKS);
+    lilos::exec::run_tasks(
+        &mut [
+            pin!(main_task(can_tx)),
+            pin!(can_rx_task(can_rx0, x_step_timer, y_step_timer, &x_stepper, &y_stepper)),
+        ],
+
+        lilos::exec::ALL_TASKS,
+    );
 }
 
 const CONTROL_INTERVAL: Millis = Millis(5);
 
-async fn main_task(mut can: FdCan<FdCan2, NormalOperationMode>) -> Infallible {
+async fn main_task(mut can: fdcan::Tx<FdCan2, NormalOperationMode>) -> Infallible {
     let mut periodic_gate =
         lilos::time::PeriodicGate::new_shift(CONTROL_INTERVAL.into(), Millis(0));
     loop {
@@ -333,6 +311,65 @@ async fn main_task(mut can: FdCan<FdCan2, NormalOperationMode>) -> Infallible {
                 marker: None,
             },
             &can_buffer,
-        ).ok();
+        )
+        .ok();
     }
+}
+
+async fn can_rx_task(
+    mut can_rx: fdcan::Rx<FdCan2, NormalOperationMode, fdcan::Fifo0>,
+    mut x_step_timer: StepTimer,
+    mut y_step_timer: StepTimer,
+    x_stepper: &Stepper<'static>,
+    y_stepper: &Stepper<'static>,
+) -> Infallible {
+    let mut buffer = [0u8; 8];
+    let mut periodic_gate =
+        lilos::time::PeriodicGate::new_shift(CONTROL_INTERVAL.into(), Millis(0));
+    // HACKY hardcoded joystick offset calibration.
+    const X_OFFSET: i16 = 16;
+    const Y_OFFSET: i16 = 40;
+    loop {
+        periodic_gate.next_time().await;
+        if let Ok(msg) = can_rx.receive(&mut buffer) {
+            let msg = msg.unwrap();
+
+            if msg.id == StandardId::new(0x130).unwrap().into() {
+                let x_cmd = i16::from_le_bytes(buffer[6..8].try_into().unwrap()) - 2048 - X_OFFSET;
+                let y_cmd = i16::from_le_bytes(buffer[4..6].try_into().unwrap()) - 2048 - Y_OFFSET;
+                let x_vel = x_cmd as i32 * MAX_STEP_FREQ / 2048;
+                let y_vel = -1 * y_cmd as i32 * MAX_STEP_FREQ / 2048;
+
+                if x_vel.abs() > MIN_STEP_FREQ || y_vel.abs() > MIN_STEP_FREQ {
+                    let x_reverse = x_vel < 0;
+                    let y_reverse = y_vel < 0;
+                    x_step_timer.set_overflow_freq(x_vel.abs() as u32);
+                    y_step_timer.set_overflow_freq(y_vel.abs() as u32);
+                    x_stepper.enable(x_reverse);
+                    y_stepper.enable(y_reverse);
+                } else {
+                    x_step_timer.set_overflow_freq(0);
+                    y_step_timer.set_overflow_freq(0);
+                    x_stepper.disable();
+                    y_stepper.disable();
+                }
+            }
+        }
+
+    }
+}
+
+#[pac::interrupt]
+unsafe fn TIM2() {
+    // Clear all interrupt flags
+    pac::TIM2.sr().write(|w| w.0 = 0);
+
+    X_STEPPER_REF.unwrap().step();
+}
+
+#[pac::interrupt]
+unsafe fn TIM5() {
+    pac::TIM5.sr().write(|w| w.0 = 0);
+
+    Y_STEPPER_REF.unwrap().step();
 }

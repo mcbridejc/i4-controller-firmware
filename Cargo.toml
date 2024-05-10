@@ -9,14 +9,16 @@ edition = "2021"
 cortex-m = { version = "0.7.4", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.1"
 critical-section = "1.1.2"
+crossbeam = { version = "0.8.4", default-features = false}
 defmt = "0.3.6"
 defmt-rtt = "0.4"
 fdcan = { version = "0.2.0", features = ["fdcan_g0_g4_l5"] }
 lilos = { path = "../lilos/os" }
-panic-probe = "*"
+panic-probe = { version = "*", features = ["print-defmt"] }
+static_cell = "2.1"
 #stm32g4 = { version = "0.15.1", features=["stm32g474"]}
 
-stm32-metapac = { version = "15.0.0", features = ["stm32g474re"] }
+stm32-metapac = { version = "15.0.0", features = ["stm32g474re", "rt"] }
 
 [profile.dev]
 codegen-units = 1

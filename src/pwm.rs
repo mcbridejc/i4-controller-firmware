@@ -14,7 +14,7 @@ pub struct PwmTimer<T> {
     tim: T
 }
 
-trait MultiPwm {
+trait MultiPwm: Send + Sync {
     fn set_duty(&self, ch: u8, duty: u16);
     fn set_high(&self, ch: u8);
 }
@@ -120,14 +120,12 @@ impl PwmTimer<TimAdv> {
 impl MultiPwm for PwmTimer<TimAdv> {
     fn set_duty(&self, ch: u8, duty: u16) {
         assert!(ch < 4);
-
-        // Set duty cycle
         let reload = duty as u32 * self.tim.arr().read().arr() as u32 / 65536;
-        self.tim.ccr(ch as usize).write(|w| w.set_ccr(reload as u16));
-
-        // Set to PWM mode
         let ccmr_reg = (ch / 2) as usize;
         let ccmr_ch = (ch % 2) as usize;
+        // Set duty cycle
+        self.tim.ccr(ch as usize).write(|w| w.set_ccr(reload as u16));
+        // Set to PWM mode
         self.tim.ccmr_output(ccmr_reg).modify(|w| w.set_ocm(ccmr_ch, vals::Ocm::PWMMODE1));
     }
 
