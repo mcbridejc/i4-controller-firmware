@@ -1,225 +1,16 @@
 //! General-purpose Input/Output (GPIO)
+#![allow(dead_code)]
 
-#![macro_use]
-use core::any::Any;
-use core::convert::Infallible;
-
-use critical_section::CriticalSection;
-
-use crate::pac::gpio::{self, vals};
 use crate::pac;
+use crate::pac::gpio::{self, vals};
 
-/// A pin object which stores info about the GPIO is controls
+/// A pin object which stores info about the GPIO it controls
 pub struct DynamicPin {
     pin_port: u8,
 }
 
-// impl<'d> Flex<'d> {
-//     /// Wrap the pin in a `Flex`.
-//     ///
-//     /// The pin remains disconnected. The initial output level is unspecified, but can be changed
-//     /// before the pin is put into output mode.
-//     ///
-//     #[inline]
-//     pub fn new(pin: impl Peripheral<P = impl Pin> + 'd) -> Self {
-//         into_ref!(pin);
-//         // Pin will be in disconnected state.
-//         Self { pin: pin.map_into() }
-//     }
-
-//     /// Put the pin into input mode.
-//     #[inline]
-//     pub fn set_as_input(&mut self, pull: Pull) {
-//         critical_section::with(|_| {
-//             let r = self.pin.block();
-//             let n = self.pin.pin() as usize;
-//             #[cfg(gpio_v1)]
-//             {
-//                 let cnf = match pull {
-//                     Pull::Up => {
-//                         r.bsrr().write(|w| w.set_bs(n, true));
-//                         vals::CnfIn::PULL
-//                     }
-//                     Pull::Down => {
-//                         r.bsrr().write(|w| w.set_br(n, true));
-//                         vals::CnfIn::PULL
-//                     }
-//                     Pull::None => vals::CnfIn::FLOATING,
-//                 };
-
-//                 let crlh = if n < 8 { 0 } else { 1 };
-//                 r.cr(crlh).modify(|w| {
-//                     w.set_mode(n % 8, vals::Mode::INPUT);
-//                     w.set_cnf_in(n % 8, cnf);
-//                 });
-//             }
-//             #[cfg(gpio_v2)]
-//             {
-//                 r.pupdr().modify(|w| w.set_pupdr(n, pull.into()));
-//                 r.otyper().modify(|w| w.set_ot(n, vals::Ot::PUSHPULL));
-//                 r.moder().modify(|w| w.set_moder(n, vals::Moder::INPUT));
-//             }
-//         });
-//     }
-
-//     /// Put the pin into output mode.
-//     ///
-//     /// The pin level will be whatever was set before (or low by default). If you want it to begin
-//     /// at a specific level, call `set_high`/`set_low` on the pin first.
-//     #[inline]
-//     pub fn set_as_output(&mut self, speed: Speed) {
-//         critical_section::with(|_| {
-//             let r = self.pin.block();
-//             let n = self.pin.pin() as usize;
-//             #[cfg(gpio_v1)]
-//             {
-//                 let crlh = if n < 8 { 0 } else { 1 };
-//                 r.cr(crlh).modify(|w| {
-//                     w.set_mode(n % 8, speed.into());
-//                     w.set_cnf_out(n % 8, vals::CnfOut::PUSHPULL);
-//                 });
-//             }
-//             #[cfg(gpio_v2)]
-//             {
-//                 r.pupdr().modify(|w| w.set_pupdr(n, vals::Pupdr::FLOATING));
-//                 r.otyper().modify(|w| w.set_ot(n, vals::Ot::PUSHPULL));
-//                 self.pin.set_speed(speed);
-//                 r.moder().modify(|w| w.set_moder(n, vals::Moder::OUTPUT));
-//             }
-//         });
-//     }
-
-//     /// Put the pin into input + output mode.
-//     ///
-//     /// This is commonly used for "open drain" mode.
-//     /// the hardware will drive the line low if you set it to low, and will leave it floating if you set
-//     /// it to high, in which case you can read the input to figure out whether another device
-//     /// is driving the line low.
-//     ///
-//     /// The pin level will be whatever was set before (or low by default). If you want it to begin
-//     /// at a specific level, call `set_high`/`set_low` on the pin first.
-//     #[inline]
-//     pub fn set_as_input_output(&mut self, speed: Speed, pull: Pull) {
-//         critical_section::with(|_| {
-//             let r = self.pin.block();
-//             let n = self.pin.pin() as usize;
-//             #[cfg(gpio_v1)]
-//             {
-//                 let crlh = if n < 8 { 0 } else { 1 };
-//                 match pull {
-//                     Pull::Up => r.bsrr().write(|w| w.set_bs(n, true)),
-//                     Pull::Down => r.bsrr().write(|w| w.set_br(n, true)),
-//                     Pull::None => {}
-//                 }
-//                 r.cr(crlh).modify(|w| w.set_mode(n % 8, speed.into()));
-//                 r.cr(crlh).modify(|w| w.set_cnf_out(n % 8, vals::CnfOut::OPENDRAIN));
-//             }
-//             #[cfg(gpio_v2)]
-//             {
-//                 r.pupdr().modify(|w| w.set_pupdr(n, pull.into()));
-//                 r.otyper().modify(|w| w.set_ot(n, vals::Ot::OPENDRAIN));
-//                 self.pin.set_speed(speed);
-//                 r.moder().modify(|w| w.set_moder(n, vals::Moder::OUTPUT));
-//             }
-//         });
-//     }
-
-//     /// Get whether the pin input level is high.
-//     #[inline]
-//     pub fn is_high(&self) -> bool {
-//         !self.is_low()
-//     }
-
-//     /// Get whether the pin input level is low.
-//     #[inline]
-//     pub fn is_low(&self) -> bool {
-//         let state = self.pin.block().idr().read().idr(self.pin.pin() as _);
-//         state == vals::Idr::LOW
-//     }
-
-//     /// Get the current pin input level.
-//     #[inline]
-//     pub fn get_level(&self) -> Level {
-//         self.is_high().into()
-//     }
-
-//     /// Get whether the output level is set to high.
-//     #[inline]
-//     pub fn is_set_high(&self) -> bool {
-//         !self.is_set_low()
-//     }
-
-//     /// Get whether the output level is set to low.
-//     #[inline]
-//     pub fn is_set_low(&self) -> bool {
-//         let state = self.pin.block().odr().read().odr(self.pin.pin() as _);
-//         state == vals::Odr::LOW
-//     }
-
-//     /// Get the current output level.
-//     #[inline]
-//     pub fn get_output_level(&self) -> Level {
-//         self.is_set_high().into()
-//     }
-
-//     /// Set the output as high.
-//     #[inline]
-//     pub fn set_high(&mut self) {
-//         self.pin.set_high();
-//     }
-
-//     /// Set the output as low.
-//     #[inline]
-//     pub fn set_low(&mut self) {
-//         self.pin.set_low();
-//     }
-
-//     /// Set the output level.
-//     #[inline]
-//     pub fn set_level(&mut self, level: Level) {
-//         match level {
-//             Level::Low => self.pin.set_low(),
-//             Level::High => self.pin.set_high(),
-//         }
-//     }
-
-//     /// Toggle the output level.
-//     #[inline]
-//     pub fn toggle(&mut self) {
-//         if self.is_set_low() {
-//             self.set_high()
-//         } else {
-//             self.set_low()
-//         }
-//     }
-// }
-
-// impl<'d> Drop for Flex<'d> {
-//     #[inline]
-//     fn drop(&mut self) {
-//         critical_section::with(|_| {
-//             let r = self.pin.block();
-//             let n = self.pin.pin() as usize;
-//             #[cfg(gpio_v1)]
-//             {
-//                 let crlh = if n < 8 { 0 } else { 1 };
-//                 r.cr(crlh).modify(|w| {
-//                     w.set_mode(n % 8, vals::Mode::INPUT);
-//                     w.set_cnf_in(n % 8, vals::CnfIn::FLOATING);
-//                 });
-//             }
-//             #[cfg(gpio_v2)]
-//             {
-//                 r.pupdr().modify(|w| w.set_pupdr(n, vals::Pupdr::FLOATING));
-//                 r.moder().modify(|w| w.set_moder(n, vals::Moder::INPUT));
-//             }
-//         });
-//     }
-// }
-
 /// Pull setting for an input.
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, defmt::Format)]
 pub enum Pull {
     /// No pull
     None,
@@ -245,8 +36,7 @@ impl From<Pull> for vals::Pupdr {
 ///
 /// These vary dpeending on the chip, ceck the reference manual or datasheet for details.
 #[allow(missing_docs)]
-#[derive(Debug, Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Copy, Clone, defmt::Format)]
 pub enum Speed {
     Low,
     Medium,
@@ -274,15 +64,13 @@ impl PinPort for DynamicPin {
 }
 
 impl Pin for DynamicPin {
-
     fn is_out_low(&self) -> bool {
         todo!()
     }
 }
 
 /// Digital input or output level.
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, defmt::Format)]
 pub enum Level {
     /// Low
     Low,
@@ -308,31 +96,26 @@ impl From<Level> for bool {
     }
 }
 
-
 /// GPIO output type
 pub enum OutputType {
     /// Drive the pin both high or low.
     PushPull,
-    /// Drive the pin low, or don't drive it at all if the output level is high.
+    /// Output, drive low, tristate high
     OpenDrain,
 }
 
-
 /// Alternate function type settings
-#[derive(Debug, Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Copy, Clone, defmt::Format)]
 pub enum AFType {
     /// Input
     Input,
     /// Output, drive the pin both high or low.
     OutputPushPull,
-    /// Output, drive the pin low, or don't drive it at all if the output level is high.
+    /// Output, drive low, tristate high
     OutputOpenDrain,
 }
 
-
-pub trait Pin: Into<DynamicPin> + PinPort +  Sized + 'static {
-
+pub trait Pin: Into<DynamicPin> + PinPort + Sized + 'static {
     #[inline]
     fn _pin(&self) -> u8 {
         self.pin_port() % 16
@@ -374,18 +157,24 @@ pub trait Pin: Into<DynamicPin> + PinPort +  Sized + 'static {
         match af_type {
             AFType::Input => {}
             AFType::OutputPushPull => block.otyper().modify(|w| w.set_ot(pin, vals::Ot::PUSHPULL)),
-            AFType::OutputOpenDrain => block.otyper().modify(|w| w.set_ot(pin, vals::Ot::OPENDRAIN)),
+            AFType::OutputOpenDrain => block
+                .otyper()
+                .modify(|w| w.set_ot(pin, vals::Ot::OPENDRAIN)),
         }
         block.pupdr().modify(|w| w.set_pupdr(pin, pull.into()));
 
-        block.moder().modify(|w| w.set_moder(pin, vals::Moder::ALTERNATE));
+        block
+            .moder()
+            .modify(|w| w.set_moder(pin, vals::Moder::ALTERNATE));
     }
 
     #[inline]
     fn set_as_analog(&self) {
         let pin = self._pin() as usize;
         let block = self.block();
-        block.moder().modify(|w| w.set_moder(pin, vals::Moder::ANALOG));
+        block
+            .moder()
+            .modify(|w| w.set_moder(pin, vals::Moder::ANALOG));
     }
 
     /// Set the pin as "disconnected", ie doing nothing and consuming the lowest
@@ -402,7 +191,9 @@ pub trait Pin: Into<DynamicPin> + PinPort +  Sized + 'static {
     fn set_speed(&self, speed: Speed) {
         let pin = self._pin() as usize;
 
-        self.block().ospeedr().modify(|w| w.set_ospeedr(pin, speed.into()));
+        self.block()
+            .ospeedr()
+            .modify(|w| w.set_ospeedr(pin, speed.into()));
     }
 
     /// Number of the pin within the port (0..31)
@@ -456,8 +247,7 @@ pub trait Pin: Into<DynamicPin> + PinPort +  Sized + 'static {
     }
 }
 
-pub struct Gpio<const PIN_PORT: u8> {
-}
+pub struct Gpio<const PIN_PORT: u8> {}
 
 const GPIOA_BASE: usize = 0x4800_0000;
 pub type PA0 = Gpio<0>;
@@ -477,58 +267,58 @@ pub type PA13 = Gpio<13>;
 pub type PA14 = Gpio<14>;
 pub type PA15 = Gpio<15>;
 
-pub type PB0 = Gpio<{(1<<4) + 0}>;
-pub type PB1 = Gpio<{(1<<4) + 1}>;
-pub type PB2 = Gpio<{(1<<4) + 2}>;
-pub type PB3 = Gpio<{(1<<4) + 3}>;
-pub type PB4 = Gpio<{(1<<4) + 4}>;
-pub type PB5 = Gpio<{(1<<4) + 5}>;
-pub type PB6 = Gpio<{(1<<4) + 6}>;
-pub type PB7 = Gpio<{(1<<4) + 7}>;
-pub type PB8 = Gpio<{(1<<4) + 8}>;
-pub type PB9 = Gpio<{(1<<4) + 9}>;
-pub type PB10 = Gpio<{(1<<4) + 10}>;
-pub type PB11 = Gpio<{(1<<4) + 11}>;
-pub type PB12 = Gpio<{(1<<4) + 12}>;
-pub type PB13 = Gpio<{(1<<4) + 13}>;
-pub type PB14 = Gpio<{(1<<4) + 14}>;
-pub type PB15 = Gpio<{(1<<4) + 15}>;
+pub type PB0 = Gpio<{ 1 << 4 }>;
+pub type PB1 = Gpio<{ (1 << 4) + 1 }>;
+pub type PB2 = Gpio<{ (1 << 4) + 2 }>;
+pub type PB3 = Gpio<{ (1 << 4) + 3 }>;
+pub type PB4 = Gpio<{ (1 << 4) + 4 }>;
+pub type PB5 = Gpio<{ (1 << 4) + 5 }>;
+pub type PB6 = Gpio<{ (1 << 4) + 6 }>;
+pub type PB7 = Gpio<{ (1 << 4) + 7 }>;
+pub type PB8 = Gpio<{ (1 << 4) + 8 }>;
+pub type PB9 = Gpio<{ (1 << 4) + 9 }>;
+pub type PB10 = Gpio<{ (1 << 4) + 10 }>;
+pub type PB11 = Gpio<{ (1 << 4) + 11 }>;
+pub type PB12 = Gpio<{ (1 << 4) + 12 }>;
+pub type PB13 = Gpio<{ (1 << 4) + 13 }>;
+pub type PB14 = Gpio<{ (1 << 4) + 14 }>;
+pub type PB15 = Gpio<{ (1 << 4) + 15 }>;
 
-pub type PC0 = Gpio<{(2<<4) + 0}>;
-pub type PC1 = Gpio<{(2<<4) + 1}>;
-pub type PC2 = Gpio<{(2<<4) + 2}>;
-pub type PC3 = Gpio<{(2<<4) + 3}>;
-pub type PC4 = Gpio<{(2<<4) + 4}>;
-pub type PC5 = Gpio<{(2<<4) + 5}>;
-pub type PC6 = Gpio<{(2<<4) + 6}>;
-pub type PC7 = Gpio<{(2<<4) + 7}>;
-pub type PC8 = Gpio<{(2<<4) + 8}>;
-pub type PC9 = Gpio<{(2<<4) + 9}>;
-pub type PC10 = Gpio<{(2<<4) + 10}>;
-pub type PC11 = Gpio<{(2<<4) + 11}>;
-pub type PC12 = Gpio<{(2<<4) + 12}>;
-pub type PC13 = Gpio<{(2<<4) + 13}>;
-pub type PC14 = Gpio<{(2<<4) + 14}>;
-pub type PC15 = Gpio<{(2<<4) + 15}>;
+pub type PC0 = Gpio<{ 2 << 4 }>;
+pub type PC1 = Gpio<{ (2 << 4) + 1 }>;
+pub type PC2 = Gpio<{ (2 << 4) + 2 }>;
+pub type PC3 = Gpio<{ (2 << 4) + 3 }>;
+pub type PC4 = Gpio<{ (2 << 4) + 4 }>;
+pub type PC5 = Gpio<{ (2 << 4) + 5 }>;
+pub type PC6 = Gpio<{ (2 << 4) + 6 }>;
+pub type PC7 = Gpio<{ (2 << 4) + 7 }>;
+pub type PC8 = Gpio<{ (2 << 4) + 8 }>;
+pub type PC9 = Gpio<{ (2 << 4) + 9 }>;
+pub type PC10 = Gpio<{ (2 << 4) + 10 }>;
+pub type PC11 = Gpio<{ (2 << 4) + 11 }>;
+pub type PC12 = Gpio<{ (2 << 4) + 12 }>;
+pub type PC13 = Gpio<{ (2 << 4) + 13 }>;
+pub type PC14 = Gpio<{ (2 << 4) + 14 }>;
+pub type PC15 = Gpio<{ (2 << 4) + 15 }>;
 
-pub type PD0 = Gpio<{(3<<4) + 0}>;
-pub type PD1 = Gpio<{(3<<4) + 1}>;
-pub type PD2 = Gpio<{(3<<4) + 2}>;
-pub type PD3 = Gpio<{(3<<4) + 3}>;
-pub type PD4 = Gpio<{(3<<4) + 4}>;
-pub type PD5 = Gpio<{(3<<4) + 5}>;
-pub type PD6 = Gpio<{(3<<4) + 6}>;
-pub type PD7 = Gpio<{(3<<4) + 7}>;
-pub type PD8 = Gpio<{(3<<4) + 8}>;
-pub type PD9 = Gpio<{(3<<4) + 9}>;
-pub type PD10 = Gpio<{(3<<4) + 10}>;
-pub type PD11 = Gpio<{(3<<4) + 11}>;
-pub type PD12 = Gpio<{(3<<4) + 12}>;
-pub type PD13 = Gpio<{(3<<4) + 13}>;
-pub type PD14 = Gpio<{(3<<4) + 14}>;
-pub type PD15 = Gpio<{(3<<4) + 15}>;
+pub type PD0 = Gpio<{ 3 << 4 }>;
+pub type PD1 = Gpio<{ (3 << 4) + 1 }>;
+pub type PD2 = Gpio<{ (3 << 4) + 2 }>;
+pub type PD3 = Gpio<{ (3 << 4) + 3 }>;
+pub type PD4 = Gpio<{ (3 << 4) + 4 }>;
+pub type PD5 = Gpio<{ (3 << 4) + 5 }>;
+pub type PD6 = Gpio<{ (3 << 4) + 6 }>;
+pub type PD7 = Gpio<{ (3 << 4) + 7 }>;
+pub type PD8 = Gpio<{ (3 << 4) + 8 }>;
+pub type PD9 = Gpio<{ (3 << 4) + 9 }>;
+pub type PD10 = Gpio<{ (3 << 4) + 10 }>;
+pub type PD11 = Gpio<{ (3 << 4) + 11 }>;
+pub type PD12 = Gpio<{ (3 << 4) + 12 }>;
+pub type PD13 = Gpio<{ (3 << 4) + 13 }>;
+pub type PD14 = Gpio<{ (3 << 4) + 14 }>;
+pub type PD15 = Gpio<{ (3 << 4) + 15 }>;
 
-trait PinPort {
+pub trait PinPort {
     fn pin_port(&self) -> u8;
 }
 
@@ -540,13 +330,13 @@ impl<const PIN_PORT: u8> PinPort for Gpio<PIN_PORT> {
 
 impl<const PIN_PORT: u8> From<Gpio<PIN_PORT>> for DynamicPin {
     fn from(value: Gpio<PIN_PORT>) -> Self {
-        DynamicPin { pin_port: value.pin_port() }
+        DynamicPin {
+            pin_port: value.pin_port(),
+        }
     }
 }
 
-impl<const PIN_PORT: u8> Pin for Gpio<PIN_PORT> {
-
-}
+impl<const PIN_PORT: u8> Pin for Gpio<PIN_PORT> {}
 
 #[allow(non_snake_case)]
 pub struct Gpios {

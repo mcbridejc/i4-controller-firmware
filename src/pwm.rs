@@ -1,6 +1,7 @@
+#![allow(dead_code)]
+use stm32_metapac::common::{RW, Reg};
 use stm32_metapac::timer::regs::{CcmrOutput, Ccr16};
-use stm32_metapac::timer::{vals, TimGp16};
-use stm32_metapac::common::{Reg, RW};
+use stm32_metapac::timer::{TimGp16, vals};
 
 use crate::pac::timer::TimAdv;
 
@@ -11,7 +12,7 @@ pub trait Pwm {
 }
 
 pub struct PwmTimer<T> {
-    tim: T
+    tim: T,
 }
 
 trait MultiPwm: Send + Sync {
@@ -24,7 +25,7 @@ pub struct PwmChan<'a> {
     timer: &'a dyn MultiPwm,
 }
 
-impl<'a> Pwm for PwmChan<'a> {
+impl Pwm for PwmChan<'_> {
     fn set_duty(&self, duty: u16) {
         self.timer.set_duty(self.ch, duty);
     }
@@ -67,7 +68,8 @@ impl PwmTimer<TimAdv> {
 
         // Missing from metapac
         // Turn on CC5
-        let ccmr3: Reg<CcmrOutput, RW> = unsafe { Reg::from_ptr((tim.as_ptr() as *mut u8).add(0x50) as _) };
+        let ccmr3: Reg<CcmrOutput, RW> =
+            unsafe { Reg::from_ptr((tim.as_ptr() as *mut u8).add(0x50) as _) };
         ccmr3.modify(|w| {
             w.set_ocm(0, vals::Ocm::TOGGLE);
             w.set_ocpe(0, true);
@@ -81,7 +83,8 @@ impl PwmTimer<TimAdv> {
         tim.bdtr().modify(|w| w.set_moe(true));
 
         // Setup CCR5 as trgo2 to trigger ADC
-        let ccr5: Reg<Ccr16, RW> = unsafe { Reg::from_ptr((tim.as_ptr() as *mut u8).add(0x48) as _) };
+        let ccr5: Reg<Ccr16, RW> =
+            unsafe { Reg::from_ptr((tim.as_ptr() as *mut u8).add(0x48) as _) };
         //ccr5.write(|w| w.set_ccr(arr));
         ccr5.write(|w| w.set_ccr(30));
 
@@ -90,7 +93,7 @@ impl PwmTimer<TimAdv> {
 
         // CR2 MMS register definitions are broken so hack it a bit
         //tim.cr2().modify(|w| w.0 |= 0b1000<<20);
-        tim.cr2().modify(|w| w.0 |= 0b1000<<20);
+        tim.cr2().modify(|w| w.0 |= 0b1000 << 20);
         Self { tim }
     }
 
@@ -100,19 +103,19 @@ impl PwmTimer<TimAdv> {
         self.tim.cr1().modify(|w| w.set_cen(true));
     }
 
-    pub fn ch1<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch1(&self) -> PwmChan {
         PwmChan { ch: 0, timer: self }
     }
 
-    pub fn ch2<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch2(&self) -> PwmChan {
         PwmChan { ch: 1, timer: self }
     }
 
-    pub fn ch3<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch3(&self) -> PwmChan {
         PwmChan { ch: 2, timer: self }
     }
 
-    pub fn ch4<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch4(&self) -> PwmChan {
         PwmChan { ch: 3, timer: self }
     }
 }
@@ -124,19 +127,24 @@ impl MultiPwm for PwmTimer<TimAdv> {
         let ccmr_reg = (ch / 2) as usize;
         let ccmr_ch = (ch % 2) as usize;
         // Set duty cycle
-        self.tim.ccr(ch as usize).write(|w| w.set_ccr(reload as u16));
+        self.tim
+            .ccr(ch as usize)
+            .write(|w| w.set_ccr(reload as u16));
         // Set to PWM mode
-        self.tim.ccmr_output(ccmr_reg).modify(|w| w.set_ocm(ccmr_ch, vals::Ocm::PWMMODE1));
+        self.tim
+            .ccmr_output(ccmr_reg)
+            .modify(|w| w.set_ocm(ccmr_ch, vals::Ocm::PWMMODE1));
     }
 
     fn set_high(&self, ch: u8) {
         assert!(ch < 4);
         let reg = (ch / 2) as usize;
         let ch = (ch % 2) as usize;
-        self.tim.ccmr_output(reg).modify(|w| w.set_ocm(ch, vals::Ocm::FORCEACTIVE))
+        self.tim
+            .ccmr_output(reg)
+            .modify(|w| w.set_ocm(ch, vals::Ocm::FORCEACTIVE))
     }
 }
-
 
 #[allow(dead_code)]
 // Implementation for general purpose 16-bit timers. It's *almost* identical, but not quite.
@@ -151,7 +159,6 @@ impl PwmTimer<TimGp16> {
         // Compute ARR to achieve the precise frequency
         let arr = (ticks / (psc + 1) as u32) as u16;
         tim.arr().write(|w| w.set_arr(arr));
-
 
         tim.cr1().modify(|w| w.set_cms(vals::Cms::CENTERALIGNED3));
 
@@ -179,19 +186,19 @@ impl PwmTimer<TimGp16> {
         self.tim.cr1().modify(|w| w.set_cen(true));
     }
 
-    pub fn ch1<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch1(&self) -> PwmChan {
         PwmChan { ch: 0, timer: self }
     }
 
-    pub fn ch2<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch2(&self) -> PwmChan {
         PwmChan { ch: 1, timer: self }
     }
 
-    pub fn ch3<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch3(&self) -> PwmChan {
         PwmChan { ch: 2, timer: self }
     }
 
-    pub fn ch4<'a>(&'a self) -> PwmChan<'a> {
+    pub fn ch4(&self) -> PwmChan {
         PwmChan { ch: 3, timer: self }
     }
 }
@@ -202,18 +209,24 @@ impl MultiPwm for PwmTimer<TimGp16> {
 
         // Set duty cycle
         let reload = duty as u32 * self.tim.arr().read().arr() as u32 / 65536;
-        self.tim.ccr(ch as usize).write(|w| w.set_ccr(reload as u16));
+        self.tim
+            .ccr(ch as usize)
+            .write(|w| w.set_ccr(reload as u16));
 
         // Set to PWM mode
         let ccmr_reg = (ch / 2) as usize;
         let ccmr_ch = (ch % 2) as usize;
-        self.tim.ccmr_output(ccmr_reg).modify(|w| w.set_ocm(ccmr_ch, vals::Ocm::PWMMODE1));
+        self.tim
+            .ccmr_output(ccmr_reg)
+            .modify(|w| w.set_ocm(ccmr_ch, vals::Ocm::PWMMODE1));
     }
 
     fn set_high(&self, ch: u8) {
         assert!(ch < 4);
         let reg = (ch / 2) as usize;
         let ch = (ch % 2) as usize;
-        self.tim.ccmr_output(reg).modify(|w| w.set_ocm(ch, vals::Ocm::FORCEACTIVE))
+        self.tim
+            .ccmr_output(reg)
+            .modify(|w| w.set_ocm(ch, vals::Ocm::FORCEACTIVE))
     }
 }

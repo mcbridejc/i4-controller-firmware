@@ -10,7 +10,9 @@
 //     lut
 // }
 
-use core::{cell::Cell, sync::atomic::{AtomicBool, AtomicU16, Ordering}};
+#![allow(dead_code)]
+
+use core::cell::Cell;
 
 use critical_section::Mutex;
 use crossbeam::atomic::AtomicCell;
@@ -25,18 +27,14 @@ impl BipolarMicrostepper {
     // NSTEPS must be divisible by 4
     const NSTEPS: usize = 16;
     // partial lookup table for sin function; takes advantage of symmetry (N must be odd)
-    const LUT: [u16; Self::NSTEPS/4] = [12539, 23169, 30272, 32767];
+    const LUT: [u16; Self::NSTEPS / 4] = [12539, 23169, 30272, 32767];
 
     pub fn new() -> Self {
         let mut scaled_lut = [0; 4];
 
-        for i in 0..Self::LUT.len() {
-            scaled_lut[i] = Self::LUT[i];
-        }
+        scaled_lut[..Self::LUT.len()].copy_from_slice(&Self::LUT[..]);
 
-        Self {
-            scaled_lut
-        }
+        Self { scaled_lut }
     }
 
     pub fn set_scale(&mut self, full_scale: u16) {
@@ -46,7 +44,7 @@ impl BipolarMicrostepper {
     }
 
     pub fn scale(&self) -> u16 {
-        self.scaled_lut[Self::NSTEPS/4 - 1]
+        self.scaled_lut[Self::NSTEPS / 4 - 1]
     }
 
     fn lookup(&self, idx: usize) -> i32 {
@@ -100,10 +98,10 @@ pub struct Stepper<'a> {
     phase_b: Mutex<IChannel<'a>>,
     mode: AtomicCell<Mode>,
     stepper_pos: Mutex<Cell<u16>>,
+    power: AtomicCell<u16>,
 }
 
 impl<'a> Stepper<'a> {
-
     pub fn new(phase_a: IChannel<'a>, phase_b: IChannel<'a>) -> Self {
         let stepper = BipolarMicrostepper::new();
 
@@ -113,7 +111,18 @@ impl<'a> Stepper<'a> {
             phase_b: Mutex::new(phase_b),
             mode: AtomicCell::new(Mode::Off),
             stepper_pos: Mutex::new(Cell::new(0)),
+            power: AtomicCell::new(0),
         }
+    }
+
+    pub fn set_duty_cycles(&self, a: i16, b: i16) {
+        critical_section::with(|cs| {
+            let phase_a = self.phase_a.borrow(cs);
+            let phase_b = self.phase_b.borrow(cs);
+            phase_a.set_duty_cycle(a);
+            phase_b.set_duty_cycle(b);
+            self.mode.store(Mode::Off);
+        })
     }
 
     pub fn disable(&self) {
@@ -127,14 +136,20 @@ impl<'a> Stepper<'a> {
     }
 
     pub fn enable(&self, reverse: bool) {
-        let mode = if reverse { Mode::Reverse } else { Mode::Forward };
+        let mode = if reverse {
+            Mode::Reverse
+        } else {
+            Mode::Forward
+        };
         self.mode.store(mode);
     }
 
+    /// Set the peak duty cycle used for commutating
+    pub fn set_power(&self, value: u16) {
+        self.power.store(value);
+    }
+
     pub fn step(&self) {
-
-        const POWER: i32 = 25000;
-
         let reverse = match self.mode.load() {
             Mode::Off => return,
             Mode::Forward => false,
@@ -149,16 +164,17 @@ impl<'a> Stepper<'a> {
             } else {
                 stepper_pos.overflowing_add(1).0
             };
-            new_pos = new_pos % self.stepper.nsteps() as u16;
+            new_pos %= self.stepper.nsteps() as u16;
             self.stepper_pos.borrow(cs).set(new_pos);
         });
 
         let (a, b) = self.stepper.get(new_pos as usize);
+        let power = self.power.load() as i32;
         critical_section::with(|cs| {
             let phase_a = self.phase_a.borrow(cs);
             let phase_b = self.phase_b.borrow(cs);
-            phase_a.set_duty_cycle((a * POWER / 32768) as i16);
-            phase_b.set_duty_cycle((b * POWER / 32768) as i16);
+            phase_a.set_duty_cycle((a * power / 32768) as i16);
+            phase_b.set_duty_cycle((b * power / 32768) as i16);
         });
     }
 }

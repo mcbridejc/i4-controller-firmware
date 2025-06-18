@@ -1,0 +1,75 @@
+device_name = "I4 Controller"
+hardware_version = "rev1"
+heartbeat_period = 1000
+
+[identity]
+vendor_id = 0xCAFE
+product_code = 10000
+revision_number = 1
+
+[[objects]]
+index = 0x2000
+parameter_name = "ISENSE"
+object_type = "array"
+array_size = 4
+data_type = "uint16"
+access_type = "ro"
+pdo_mapping = "tpdo"
+
+# Specifies the control mode
+# 0 - Duty cycle command mode
+# 1 - Velocity command mode
+# Changes will only take effect in PreOperational state
+[[objects]]
+index = 0x3000
+parameter_name = "Mode"
+object_type = "var"
+data_type = "int8"
+access_type = "rw"
+pdo_mapping = "none"
+persist = true
+
+# Specifies an acceleration limit, in steps/s/s
+# Used in stepper mode. A value of 0 disables acceleration limits.
+[[objects]]
+index = 0x3001
+parameter_name = "Acceleration Limit"
+object_type = "var"
+data_type = "uint16"
+access_type = "rw"
+pdo_mapping = "none"
+persist = true
+
+# Specifies the peak duty cycle in stepper mode
+[[objects]]
+index = 0x3002
+parameter_name = "Commutation Peak Duty"
+object_type = "var"
+data_type = "uint16"
+access_type = "rw"
+pdo_mapping = "none"
+persist = true
+
+# An array of duty cycle commands, one per channel
+# Used in voltage mode
+[[objects]]
+index = 0x3100
+parameter_name = "Duty Cycle Command"
+object_type = "array"
+array_size = 4
+data_type = "int16"
+access_type = "rw"
+pdo_mapping = "rpdo"
+persist = false
+
+# An array of velocity commands, one for channels 0/1, and one for channels 2/3
+# Used in stepper mode
+[[objects]]
+index = 0x3101
+parameter_name = "Velocity Command"
+object_type = "array"
+array_size = 2
+data_type = "int16"
+access_type = "rw"
+pdo_mapping = "rpdo"
+persist = false

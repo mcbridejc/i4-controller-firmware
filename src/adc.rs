@@ -1,8 +1,8 @@
-
+#![allow(dead_code)]
 use pac::adc::regs::Cfgr2;
 use stm32_metapac as pac;
 
-use crate::gpio::{gpios, Pin};
+use crate::gpio::{Pin, gpios};
 
 pub fn configure_op_amps() {
     use pac::opamp::vals;
@@ -55,7 +55,7 @@ pub fn configure_op_amps() {
     });
 }
 
-fn configure_adc(adc: pac::adc::Adc, channel: usize)  {
+fn configure_adc(adc: pac::adc::Adc, channel: usize) {
     use pac::adc::vals;
 
     adc.cr().modify(|w| {
@@ -67,7 +67,8 @@ fn configure_adc(adc: pac::adc::Adc, channel: usize)  {
 
     while adc.cr().read().aden() {}
 
-    adc.cr().modify(|w| w.set_adcaldif(vals::Adcaldif::SINGLEENDED));
+    adc.cr()
+        .modify(|w| w.set_adcaldif(vals::Adcaldif::SINGLEENDED));
     adc.cr().modify(|w| w.set_adcal(true));
 
     // Wait for calibration to complete
@@ -99,11 +100,11 @@ fn configure_adc(adc: pac::adc::Adc, channel: usize)  {
         w.set_ovrmod(vals::Ovrmod::OVERWRITE);
     });
 
-
     // metapac cfgr2 register definition is broken, so set oversampling settings manually\
     // OVSR = 6: 128x oversampling
     // OVSS = 3: shift left 3 bits
     //adc.cfgr2().write_value(Cfgr2((3 << 5) | (6 << 2) | 1));
+    #[allow(clippy::identity_op)]
     adc.cfgr2().write_value(Cfgr2((0 << 5) | (3 << 2) | 1));
 
     adc.cfgr2().modify(|w| w.set_trovs(vals::Trovs::TRIGGERED));
@@ -113,14 +114,14 @@ fn configure_adc(adc: pac::adc::Adc, channel: usize)  {
     if channel <= 9 {
         adc.smpr(0).modify(|w| w.set_smp(channel as _, sample_time));
     } else {
-        adc.smpr(1).modify(|w| w.set_smp((channel - 10) as _, sample_time));
+        adc.smpr(1)
+            .modify(|w| w.set_smp((channel - 10) as _, sample_time));
     }
 
     adc.sqr1().modify(|w| {
         w.set_l(0);
         w.set_sq(0, channel as _);
     });
-
 }
 
 pub fn configure_adcs() {
@@ -154,7 +155,8 @@ pub fn configure_adcs() {
     });
 
     // stm32_metapac seems to be broken wrt the split common regs
-    pub const ADC345_COMMON: pac::adccommon::AdcCommon = unsafe { pac::adccommon::AdcCommon::from_ptr(0x5000_0700 as usize as _) };
+    pub const ADC345_COMMON: pac::adccommon::AdcCommon =
+        unsafe { pac::adccommon::AdcCommon::from_ptr(0x5000_0700 as _) };
     // Common ADC config
     ADC345_COMMON.ccr().modify(|w| {
         // Prescaler of 4, to yeild ADC clock of 128/4 = 32MHz
@@ -185,8 +187,8 @@ pub fn trim_opamps() {
     // Ordered as the channels are ordered
     let opamps = [pac::OPAMP1, pac::OPAMP3, pac::OPAMP4, pac::OPAMP2];
 
-    for i in 0..4 {
-        opamps[i].csr().modify(|w| {
+    for opamp in &opamps {
+        opamp.csr().modify(|w| {
             w.set_calsel(pac::opamp::vals::Calsel::PERCENT90);
             w.set_usertrim(pac::opamp::vals::Usertrim::USER);
             w.set_calon(true);
@@ -208,7 +210,14 @@ pub fn trim_opamps() {
 
         let voltage = read_isense();
 
-        defmt::info!("N {}: {} {} {} {}", trim, voltage[0], voltage[1], voltage[2], voltage[3]);
+        defmt::info!(
+            "N {}: {} {} {} {}",
+            trim,
+            voltage[0],
+            voltage[1],
+            voltage[2],
+            voltage[3]
+        );
 
         for i in 0..4 {
             if voltage[i] < 2048 && !finished[i] {
@@ -220,8 +229,8 @@ pub fn trim_opamps() {
         trim += 1;
     }
 
-    for i in 0..4 {
-        opamps[i].csr().modify(|w| {
+    for opamp in &opamps {
+        opamp.csr().modify(|w| {
             w.set_calsel(pac::opamp::vals::Calsel::PERCENT10);
         });
     }
@@ -239,7 +248,14 @@ pub fn trim_opamps() {
 
         let voltage = read_isense();
 
-        defmt::info!("P {}: {} {} {} {}", trim, voltage[0], voltage[1], voltage[2], voltage[3]);
+        defmt::info!(
+            "P {}: {} {} {} {}",
+            trim,
+            voltage[0],
+            voltage[1],
+            voltage[2],
+            voltage[3]
+        );
 
         for i in 0..4 {
             if voltage[i] < 2048 && !finished[i] {
@@ -251,9 +267,8 @@ pub fn trim_opamps() {
         trim += 1;
     }
 
-
-    for i in 0..4 {
-        opamps[i].csr().modify(|w| {
+    for opamp in &opamps {
+        opamp.csr().modify(|w| {
             w.set_calon(false);
         });
     }
@@ -280,12 +295,7 @@ fn read_adc_result(adc: pac::adc::Adc) -> u16 {
     adc.dr().read().0 as u16
 }
 
-
 pub fn read_isense() -> [u16; 4] {
-    use pac::opamp::vals;
-
-
-
     // ADC is triggered by timer every PWM cycle; just read the latest result
     [
         read_adc_result(pac::ADC1),

@@ -2,12 +2,11 @@ use crate::pac;
 
 pub struct StepTimer {
     tim: pac::timer::TimGp32,
-    tick_freq: u32
+    tick_freq: u32,
 }
 
 impl StepTimer {
     pub fn new(tim: pac::timer::TimGp32, tick_freq: u32) -> Self {
-
         tim.cr1().modify(|w| {
             w.set_arpe(true);
             w.set_cen(true);
@@ -40,5 +39,4 @@ impl StepTimer {
     pub fn disable_irq(&mut self) {
         self.tim.dier().modify(|w| w.set_uie(false));
     }
-
 }

@@ -1,0 +1,39 @@
+# Node Configuration for I4 controller acting as XY magnet controller
+
+# RPDO0 is used to receive velocity command
+[rpdo.0]
+enabled = true
+cob = 0x201
+transmission_type = 254
+mappings = [
+    { index=0x3101, sub=1, size = 16 },
+    { index=0x3101, sub=2, size = 16 }
+]
+
+# Set the control mode to velocity
+[[store]]
+index = 0x3000
+sub = 0
+type = "u8"
+value = 1
+
+# Set the stepper acceleration limit
+[[store]]
+index = 0x3001
+sub = 0
+type = "u16"
+value = 1500
+
+# Set the stepper peak duty cycle
+[[store]]
+index = 0x3002
+sub = 0
+type = "u16"
+value = 18000
+
+# Put the device into auto-start mode
+[[store]]
+index = 0x5000
+sub = 0
+type = "u8"
+value = 1
